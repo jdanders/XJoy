@@ -281,6 +281,23 @@ _XUSB_BUTTON get_mapping_from_config(std::string key, _XUSB_BUTTON fallback) {
 	}
 }
 
+uint8_t get_orientation_from_config(std::string key, uint8_t fallback) {
+    // Return the fallback value if the config was loaded incorrectly
+    if (config == NULL) {
+    std::cout <<"IN CONFIG"<<std::endl;
+        return fallback;
+    }
+
+    // Restrict the keys to the mapping section of the config
+    std::string str_value = *config->get_qualified_as<std::string>("mappings." + key);
+    try {
+        return std::stoi(str_value);
+    }
+    catch (std::string param) {
+        std::cerr << "=> Invalid button provided in config: " << param << std::endl;
+        return fallback;
+    }
+}
 void subcomm(hid_device* joycon, u8* in, u8 len, u8 comm, u8 get_response, u8 is_left)
 {
 	u8 buf[OUT_BUFFER_SIZE] = { 0 };
@@ -386,53 +403,46 @@ void setup_joycon(hid_device *jc, u8 leds, u8 is_left) {
 	subcomm(jc, &send_buf, 1, 0x3, 1, is_left);
 }
 
-void initialize_left_joycon() {
+int initialize_left_joycon() {
   struct hid_device_info *left_joycon_info = hid_enumerate(NINTENDO, JOYCON_L);
-  if(left_joycon_info != NULL) std::cout << " => found left Joy-Con" << std::endl;
+  if (left_joycon_info != NULL) {
+      std::cout << " => found left Joy-Con" << std::endl;
+      left_joycon = hid_open(NINTENDO, JOYCON_L, left_joycon_info->serial_number);
+      if (left_joycon != NULL) {
+          std::cout << " => successfully connected to left Joy-Con" << std::endl;
+          setup_joycon(left_joycon, 0x1, 1);
+      }
+      else {
+          std::cout << " => could not connect to left Joy-Con" << std::endl;
+          return 1;
+      }
+  }
   else {
     std::cout << " => could not find left Joy-Con" << std::endl;
-    hid_exit();
-    vigem_free(client);
-    std::cout << "press [ENTER] to exit" << std::endl;
-    getchar();
-    exit(1);
+    return 1;
   }
-  left_joycon = hid_open(NINTENDO, JOYCON_L, left_joycon_info->serial_number);
-  if(left_joycon != NULL) std::cout << " => successfully connected to left Joy-Con" << std::endl;
-  else {
-    std::cout << " => could not connect to left Joy-Con" << std::endl;
-    hid_exit();
-    vigem_free(client);
-    std::cout << "press [ENTER] to exit" << std::endl;
-    getchar();
-    exit(1);
-  }
-
-  setup_joycon(left_joycon, 0x1, 1);
+  return 0;
 }
 
-void initialize_right_joycon() {
+int initialize_right_joycon() {
   struct hid_device_info *right_joycon_info = hid_enumerate(NINTENDO, JOYCON_R);
-  if(right_joycon_info != NULL) std::cout << " => found right Joy-Con" << std::endl;
-  else {
-    std::cout << " => could not find right Joy-Con" << std::endl;
-    hid_exit();
-    vigem_free(client);
-    std::cout << "press [ENTER] to exit" << std::endl;
-    getchar();
-    exit(1);
+  if (right_joycon_info != NULL) {
+      std::cout << " => found right Joy-Con" << std::endl;
+      right_joycon = hid_open(NINTENDO, JOYCON_R, right_joycon_info->serial_number);
+      if (right_joycon != NULL) {
+          std::cout << " => successfully connected to right Joy-Con" << std::endl;
+          setup_joycon(right_joycon, 0x1, 0);
+      }
+      else {
+          std::cout << " => could not connect to right Joy-Con" << std::endl;
+          return 1;
+      }
   }
-  right_joycon = hid_open(NINTENDO, JOYCON_R, right_joycon_info->serial_number);
-  if(right_joycon != NULL) std::cout << " => successfully connected to right Joy-Con" << std::endl;
   else {
-    std::cout << " => could not connect to right Joy-Con" << std::endl;
-    hid_exit();
-    vigem_free(client);
-    std::cout << "press [ENTER] to exit" << std::endl;
-    getchar();
-    exit(1);
+      std::cout << " => could not find right Joy-Con" << std::endl;
+      return 1;
   }
-  setup_joycon(right_joycon, 0x1, 0);
+  return 0;
 }
 
 void initialize_xbox() {
@@ -468,30 +478,28 @@ void process_stick(bool is_left, uint8_t a, uint8_t b, uint8_t c) {
 						 (uint16_t)((b >> 4) | (c << 4)) };
 	float s[] = { 0, 0 };
 	u8 offset = is_left ? 0 : 7;
+    std::cout << "\t\t\t\t\t\t\r";
+    std::cout << signed(raw[0] - stick_cal[0 + 2 + offset]) << "\t\t" << signed(raw[1] - stick_cal[1 + 2 + offset]) << "\r";
 	for (u8 i = 0; i < 2; ++i)
 	{
 		s[i] = (raw[i] - stick_cal[i + 2 + offset]);
 		if (abs(s[i]) < stick_cal[6 + offset]) s[i] = 0; // inside deadzone
-		else if (s[i] > 0)						// axis is above center
-		{
-			s[i] /= stick_cal[i + offset];
-		}
-		else									// axis is below center
-		{
-			s[i] /= stick_cal[i + 4 + offset];
-		}
-		if (s[i] > 1)  s[i] = 1;
-		if (s[i] < -1) s[i] = -1;
-		s[i] *= (XBOX_ANALOG_MAX);
-	}
+        s[i] *= (XBOX_ANALOG_MAX/1000); // Reading range up to about 1000
+        if (s[i] > XBOX_ANALOG_MAX)  s[i] = XBOX_ANALOG_MAX;
+		if (s[i] < -XBOX_ANALOG_MAX) s[i] = -XBOX_ANALOG_MAX;
+    }
 
-	if (is_left) {
-		report.sThumbLX = (SHORT)s[0];
-		report.sThumbLY = (SHORT)s[1];
+    float l_x_sign = get_orientation_from_config("L_X_INVERT", 0) ? -1 : 1;
+    float l_y_sign = get_orientation_from_config("L_Y_INVERT", 0) ? -1 : 1;
+    float r_x_sign = get_orientation_from_config("R_X_INVERT", 0) ? -1 : 1;
+    float r_y_sign = get_orientation_from_config("R_Y_INVERT", 0) ? -1 : 1;
+    if (is_left) {
+        report.sThumbLX = (SHORT)(l_x_sign * s[get_orientation_from_config("L_X_AXIS",0)]);
+		report.sThumbLY = (SHORT)(l_y_sign * s[get_orientation_from_config("L_Y_AXIS",1)]);
 	}
 	else {
-		report.sThumbRX = (SHORT)s[0];
-		report.sThumbRY = (SHORT)s[1];
+		report.sThumbRX = (SHORT)(r_x_sign * s[get_orientation_from_config("R_X_AXIS",0)]);
+		report.sThumbRY = (SHORT)(r_y_sign * s[get_orientation_from_config("R_Y_AXIS",1)]);
 	}
 }
 
@@ -779,7 +787,11 @@ void joycon_cleanup(hid_device *jc, u8 is_left)
 DWORD WINAPI left_joycon_thread(__in LPVOID lpParameter) {
   WaitForSingleObject(report_mutex, INFINITE);
   std::cout << " => left Joy-Con thread started" << std::endl;
-  initialize_left_joycon();
+  if (initialize_left_joycon()) {
+      ReleaseMutex(report_mutex);
+      std::cout << " => left Joy-Con thread exited" << std::endl;
+      return 1;
+  }
   ReleaseMutex(report_mutex);
   for(;;) {
     if(kill_threads) break;
@@ -787,7 +799,7 @@ DWORD WINAPI left_joycon_thread(__in LPVOID lpParameter) {
     WaitForSingleObject(report_mutex, INFINITE);
     process_left_joycon();
     vigem_target_x360_update(client, target, report);
-    std::cout << std::endl;
+    //std::cout << std::endl;
     ReleaseMutex(report_mutex);
   }
   joycon_cleanup(left_joycon, 1);
@@ -797,7 +809,11 @@ DWORD WINAPI left_joycon_thread(__in LPVOID lpParameter) {
 DWORD WINAPI right_joycon_thread(__in LPVOID lpParameter) {
   WaitForSingleObject(report_mutex, INFINITE);
   std::cout << " => right Joy-Con thread started" << std::endl;
-  initialize_right_joycon();
+  if (initialize_right_joycon()) {
+      ReleaseMutex(report_mutex);
+      std::cout << " => right Joy-Con thread exited" << std::endl;
+      return 1;
+  }
   ReleaseMutex(report_mutex);
   for(;;) {
     if(kill_threads) break;
