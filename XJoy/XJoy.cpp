@@ -780,8 +780,17 @@ void process_right_joycon() {
 
 void joycon_cleanup(hid_device *jc, u8 is_left)
 {
-	u8 send_buf = 0x3f;
-	subcomm(jc, &send_buf, 1, 0x3, 1, is_left);
+    u8 send_buf;
+    send_buf = 0xf0; // blink the lights
+    subcomm(jc, &send_buf, 1, 0x30, 0, is_left);
+    Sleep(10);
+    send_buf = 0x01; // Enable low power mode
+    subcomm(jc, &send_buf, 1, 0x8, 0, is_left);
+    Sleep(10);
+    send_buf = 0x00; // disconnect
+    subcomm(jc, &send_buf, 1, 0x6, 0, is_left);
+    Sleep(10);
+    std::cout << (is_left ? "Left" : "Right") << " cleanup done" << std::endl << std::endl;
 }
 
 DWORD WINAPI left_joycon_thread(__in LPVOID lpParameter) {
@@ -828,17 +837,26 @@ DWORD WINAPI right_joycon_thread(__in LPVOID lpParameter) {
   return 0;
 }
 
-void terminate() {
-  kill_threads = true;
-  Sleep(10);
-  TerminateThread(left_thread, 0);
-  TerminateThread(right_thread, 0);
-  std::cout << "disconnecting and exiting..." << std::endl;
-  disconnect_exit();
+void terminate_xjoy() {
+	kill_threads = true;
+	TerminateThread(left_thread, 0);
+	TerminateThread(right_thread, 0);
+	if (left_joycon) {
+		std::cout << "Shutting down left..." << std::endl;
+		joycon_cleanup(left_joycon, 1);
+	}
+	if (right_joycon) {
+		std::cout << "Shutting down right..." << std::endl;
+		joycon_cleanup(right_joycon, 0);
+	}
+	std::cout << "disconnecting and exiting..." << std::endl;
+	Sleep(1000);
+	disconnect_exit();
 }
 
 void exit_handler(int signum) {
-  terminate();
+  terminate_xjoy();
+  Sleep(10000);
   exit(signum);
 }
 
@@ -863,6 +881,7 @@ int main() {
   Sleep(500);
   std::cout << std::endl;
   getchar();
-  terminate();
+  terminate_xjoy();
+  Sleep(20000);
 }
 
