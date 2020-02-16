@@ -290,13 +290,15 @@ uint8_t get_orientation_from_config(std::string key, uint8_t fallback) {
 
     // Restrict the keys to the mapping section of the config
     std::string str_value = *config->get_qualified_as<std::string>("mappings." + key);
-    try {
+    if (str_value.length() > 0)
+        try {
         return std::stoi(str_value);
-    }
-    catch (std::string param) {
-        std::cerr << "=> Invalid button provided in config: " << param << std::endl;
-        return fallback;
-    }
+        }
+        catch (std::string param) {
+            std::cerr << "=> Invalid button provided in config: " << param << std::endl;
+            return fallback;
+        }
+    else return fallback;
 }
 void subcomm(hid_device* joycon, u8* in, u8 len, u8 comm, u8 get_response, u8 is_left)
 {
@@ -489,16 +491,16 @@ void process_stick(bool is_left, uint8_t a, uint8_t b, uint8_t c) {
 		if (s[i] < -XBOX_ANALOG_MAX) s[i] = -XBOX_ANALOG_MAX;
     }
 
-    float l_x_sign = get_orientation_from_config("L_X_INVERT", 0) ? -1 : 1;
-    float l_y_sign = get_orientation_from_config("L_Y_INVERT", 0) ? -1 : 1;
-    float r_x_sign = get_orientation_from_config("R_X_INVERT", 0) ? -1 : 1;
-    float r_y_sign = get_orientation_from_config("R_Y_INVERT", 0) ? -1 : 1;
     if (is_left) {
+        float l_x_sign = get_orientation_from_config("L_X_INVERT", 0) ? -1 : 1;
+        float l_y_sign = get_orientation_from_config("L_Y_INVERT", 0) ? -1 : 1;
         report.sThumbLX = (SHORT)(l_x_sign * s[get_orientation_from_config("L_X_AXIS",0)]);
 		report.sThumbLY = (SHORT)(l_y_sign * s[get_orientation_from_config("L_Y_AXIS",1)]);
 	}
 	else {
-		report.sThumbRX = (SHORT)(r_x_sign * s[get_orientation_from_config("R_X_AXIS",0)]);
+        float r_x_sign = get_orientation_from_config("R_X_INVERT", 0) ? -1 : 1;
+        float r_y_sign = get_orientation_from_config("R_Y_INVERT", 0) ? -1 : 1;
+        report.sThumbRX = (SHORT)(r_x_sign * s[get_orientation_from_config("R_X_AXIS",0)]);
 		report.sThumbRY = (SHORT)(r_y_sign * s[get_orientation_from_config("R_Y_AXIS",1)]);
 	}
 }
@@ -756,13 +758,14 @@ void process_right_joycon() {
   u8 offset = 0;
   u8 shift = 0;
   u8 offset2 = 0;
+  bool choose_right = get_mapping_from_config("R_STICK", XUSB_GAMEPAD_RIGHT_THUMB) == XUSB_GAMEPAD_RIGHT_THUMB ? true : false;
   if (data[0] == 0x30 || data[0] == 0x21) {
 	  // 0x30 input reports order the button status data differently
 	  // this approach is ugly, but doesn't require changing the enum
 	  offset = 2;
 	  offset2 = 1;
 	  shift = 1;
-	  process_stick(false, data[9], data[10], data[11]);
+	  process_stick(choose_right, data[9], data[10], data[11]);
   } else process_buttons(RIGHT_ANALOG, (JOYCON_BUTTON)data[3]);
   region_part(data[1 + offset]>>(shift*3), RIGHT_BUTTONS, R_BUT_A);
   region_part(data[1 + offset], RIGHT_BUTTONS, R_BUT_B);
@@ -783,13 +786,13 @@ void joycon_cleanup(hid_device *jc, u8 is_left)
     u8 send_buf;
     send_buf = 0xf0; // blink the lights
     subcomm(jc, &send_buf, 1, 0x30, 0, is_left);
-    Sleep(10);
+    Sleep(20);
     send_buf = 0x01; // Enable low power mode
     subcomm(jc, &send_buf, 1, 0x8, 0, is_left);
-    Sleep(10);
+    Sleep(20);
     send_buf = 0x00; // disconnect
     subcomm(jc, &send_buf, 1, 0x6, 0, is_left);
-    Sleep(10);
+    Sleep(20);
     std::cout << (is_left ? "Left" : "Right") << " cleanup done" << std::endl << std::endl;
 }
 
@@ -830,7 +833,7 @@ DWORD WINAPI right_joycon_thread(__in LPVOID lpParameter) {
     WaitForSingleObject(report_mutex, INFINITE);
     process_right_joycon();
     vigem_target_x360_update(client, target, report);
-    std::cout << std::endl;
+    //::cout << std::endl;
     ReleaseMutex(report_mutex);
   }
   joycon_cleanup(right_joycon, 0);
